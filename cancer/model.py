@@ -6,7 +6,7 @@ BATCH_SIZE = 16
 NUM_TRAIN_ITERS = 1000
 IMG_SIZE = 96
 IMG_CHANNELS = 3
-SUPERPIX_CHANNELS = 32
+SUPERPIX_CHANNELS = 48
 
 def read_csv(filename):
     with open(filename) as file:
@@ -50,7 +50,7 @@ class SuperPixel:
         self.layers = {}
 
         self.layers["fc1"] = tf.layers.Dense(
-            units=64,
+            units=96,
             activation=tf.nn.relu
         )
         self.layers["fc2"] = tf.layers.Dense(
@@ -84,6 +84,7 @@ class Model:
                 kernel_size=CONV1_SIZE,
                 padding="same",
                 activation=tf.nn.relu)
+            self.layers["batch_norm{}0".format(x)] = BatchNormalizer(lay1size)
             self.layers["convlay{}1".format(x)] = tf.layers.Conv2D(
                 filters=lay1size,
                 kernel_size=CONV1_SIZE,
@@ -94,11 +95,13 @@ class Model:
                 strides=POOL_STRIDES,
                 padding='same',
             )
+            self.layers["batch_norm{}1".format(x)] = BatchNormalizer(lay1size)
 
         self.layers["fc1"] = tf.layers.Dense(
             units=lay1size,
             activation=tf.nn.relu
         )
+        self.layers["batch_norm_fc1"] = BatchNormalizer(lay1size)
         self.layers["fc2"] = tf.layers.Dense(
             units=lay1size,
             activation=tf.nn.relu
@@ -109,15 +112,18 @@ class Model:
 
     def fn(self,input):
         cur_input = input
-        cur_input = self.layers["input_filter"](cur_input)
+        #cur_input = self.layers["input_filter"](cur_input)
         for x in range(self.DEPTH):
             cur_input = self.layers["convlay{}0".format(x)](cur_input)
+            cur_input = self.layers["batch_norm{}0".format(x)](cur_input)
             cur_input = self.layers["convlay{}1".format(x)](cur_input)
             cur_input = self.layers["maxpool{}".format(x)](cur_input)
+            cur_input = self.layers["batch_norm{}1".format(x)](cur_input)
             print(cur_input)
 
         cur_input = tf.layers.flatten(cur_input)
         cur_input = self.layers["fc1"](cur_input)
+        cur_input = self.layers["batch_norm_fc1"](cur_input)
         cur_input = self.layers["fc2"](cur_input)
         cur_input = self.layers["fcout"](cur_input)
         print(cur_input)
@@ -138,7 +144,11 @@ def cmp_super_out(out1,out2):
     diff = out1 * out2
     #flatdiff = tf.layers.flatten(diff)
     summeddiff = tf.reduce_mean(diff,axis=1)
-    return summeddiff
+    summed_same = tf.reduce_mean(out1*out1,axis=1)
+    concat = tf.concat([summeddiff,summed_same],axis=0)
+    outs = tf.concat([tf.zeros_like(summeddiff),tf.ones_like(summed_same)],axis=0)
+    return tf.nn.sigmoid_cross_entropy_with_logits(logits=concat,labels=outs)
+
 
 def compare_loss(input,superpix):
     model_out = superpix.fn(input)
@@ -149,13 +159,40 @@ def compare_loss(input,superpix):
     rolled = tf.concat([reshaped[roll_idx:],reshaped[:roll_idx]],axis=0)
     return cmp_super_out(reshaped,rolled)
 
+def prod(l):
+    p = 1
+    for x in l:
+        p *= x
+    return p
+
+def sqr(x):
+    return x * x
+
+class BatchNormalizer:
+    def __init__(self,channel_size):
+        self.mean_coef = tf.Variable(tf.zeros(channel_size))
+        self.sd_coef = tf.Variable(tf.ones(channel_size))
+
+    def fn(self,input):
+        orig_shape = input.get_shape().as_list()
+        batch_size = prod(orig_shape[:-1])
+        channel_size = orig_shape[-1]
+        flat_layer = tf.reshape(input,[batch_size,channel_size])
+        batch_mean = tf.reduce_mean(flat_layer,axis=0)
+        batch_sd = tf.reduce_sum(tf.sqrt(sqr(flat_layer - batch_mean)),axis=0) / (batch_size-1)
+        result = ((flat_layer - batch_mean) / batch_sd) * self.sd_coef + self.mean_coef
+        return tf.reshape(result,orig_shape)
+
+    __call__ = fn
+
+
 def train_main():
-    csv_data = read_csv("train_labels.csv")
+    csv_data = read_csv("../data/train_labels.csv")
     bmp_folder = "../data/bmps_train/"
     input_gen,outputs_truth = make_dataset(csv_data,bmp_folder)
 
-    superpix = SuperPixel()
-    pix_loss = tf.reduce_mean(compare_loss(input_gen,superpix))
+    #superpix = SuperPixel()
+    #pix_loss = tf.reduce_mean(compare_loss(input_gen,superpix))
 
     model_out = model((input_gen))
 
@@ -164,14 +201,14 @@ def train_main():
     optimizer_main = tf.train.AdamOptimizer(0.001)
     optim_main = optimizer_main.minimize(loss)
 
-    optimizer_pix = tf.train.AdamOptimizer(0.001)
-    optim_pix = optimizer_pix.minimize(pix_loss)
+    #optimizer_pix = tf.train.AdamOptimizer(0.001)
+    #optim_pix = optimizer_pix.minimize(pix_loss)
 
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
-        for x in range(100):
+        for x in range(300):
             tot_loss = 0
-            num_iters = 10
+            num_iters = 20
             #for y in range(num_iters):
             #    opt_val,loss_val = sess.run([optim_pix,pix_loss])
             #    tot_loss += loss_val
