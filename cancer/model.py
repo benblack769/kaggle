@@ -1,9 +1,10 @@
 import tensorflow as tf
 import numpy as np
 import os
+from resxnet import ResXNet
 
-BATCH_SIZE = 16
-NUM_TRAIN_ITERS = 1000
+BATCH_SIZE = 2
+NUM_TRAIN_ITERS = 3
 IMG_SIZE = 96
 IMG_CHANNELS = 3
 SUPERPIX_CHANNELS = 32
@@ -45,24 +46,7 @@ def make_dataset(csv_data,folder):
     input,output = iter.get_next()
     return input,output
 
-class SuperPixel:
-    def __init__(self):
-        self.layers = {}
 
-        self.layers["fc1"] = tf.layers.Dense(
-            units=64,
-            activation=tf.nn.relu
-        )
-        self.layers["fc2"] = tf.layers.Dense(
-            units=SUPERPIX_CHANNELS,
-            #activation=tf.nn.relu
-        )
-
-
-    def fn(self,input):
-        lay1 = self.layers['fc1'](input)
-        laycmp = self.layers['fc2'](input)
-        return laycmp
 
 class Model:
     def __init__(self):
@@ -72,23 +56,21 @@ class Model:
         POOL_STRIDES=[2,2]
         lay1size = 32
         self.DEPTH=DEPTH=5
-
-        self.layers["input_filter"] = tf.layers.Dense(
-            units=lay1size,
-            activation=tf.nn.relu
-        )
+        NUM_FOLDS = 4
 
         for x in range(DEPTH):
-            self.layers["convlay{}0".format(x)] = tf.layers.Conv2D(
+            self.layers["convlay{}0".format(x)] = ResXNet(
+                filters=lay1size,
+                kernel_size=CONV1_SIZE,
+                input_channels=lay1size,
+                num_folds=NUM_FOLDS,
+                padding="same",
+                activation=tf.nn.relu)
+            '''self.layers["convlay{}1".format(x)] = tf.layers.Conv2D(
                 filters=lay1size,
                 kernel_size=CONV1_SIZE,
                 padding="same",
-                activation=tf.nn.relu)
-            self.layers["convlay{}1".format(x)] = tf.layers.Conv2D(
-                filters=lay1size,
-                kernel_size=CONV1_SIZE,
-                padding="same",
-                activation=tf.nn.relu)
+                activation=tf.nn.relu)'''
             self.layers["maxpool{}".format(x)] = tf.layers.MaxPooling2D(
                 pool_size=POOL_SIZE,
                 strides=POOL_STRIDES,
@@ -109,10 +91,10 @@ class Model:
 
     def fn(self,input):
         cur_input = input
-        cur_input = self.layers["input_filter"](cur_input)
+        #cur_input = self.layers["input_filter"](cur_input)
         for x in range(self.DEPTH):
             cur_input = self.layers["convlay{}0".format(x)](cur_input)
-            cur_input = self.layers["convlay{}1".format(x)](cur_input)
+            #cur_input = self.layers["convlay{}1".format(x)](cur_input)
             cur_input = self.layers["maxpool{}".format(x)](cur_input)
             print(cur_input)
 
@@ -124,67 +106,49 @@ class Model:
 
         return cur_input
 
-def model(input):
-    mod = Model()
-    cur_out = mod.fn(input)
-    cur_out2 = mod.fn(0.1*input)
-    #cur_out = input
-    print(cur_out.shape)
-
-    return tf.squeeze(cur_out)
-
-
-def cmp_super_out(out1,out2):
-    diff = out1 * out2
-    #flatdiff = tf.layers.flatten(diff)
-    summeddiff = tf.reduce_mean(diff,axis=1)
-    return summeddiff
-
-def compare_loss(input,superpix):
-    model_out = superpix.fn(input)
-    roll_batch_size = BATCH_SIZE*IMG_SIZE*IMG_SIZE
-    reshaped = tf.reshape(model_out,[roll_batch_size,SUPERPIX_CHANNELS])
-    roll_idx = tf.random_uniform((1,),minval=0,maxval=roll_batch_size,dtype=tf.int32)
-    roll_idx = tf.reshape(roll_idx,[])
-    rolled = tf.concat([reshaped[roll_idx:],reshaped[:roll_idx]],axis=0)
-    return cmp_super_out(reshaped,rolled)
+def get_train_test_csv_data(csv_data,split):
+    csv_len = len(csv_data.values()[0])
 
 def train_main():
-    csv_data = read_csv("train_labels.csv")
+    csv_data = read_csv("../data/train_labels.csv")
     bmp_folder = "../data/bmps_train/"
+    #train_csv_data,test_csv_data = get_train_test_csv_data(csv_data)
     input_gen,outputs_truth = make_dataset(csv_data,bmp_folder)
+    #input_gen_test,outputs_truth_test = make_dataset(csv_data,bmp_folder)
 
-    superpix = SuperPixel()
-    pix_loss = tf.reduce_mean(compare_loss(input_gen,superpix))
-
-    model_out = model((input_gen))
+    mod = Model()
+    train_out = mod.fn(input_gen)
+    #test_out =
+    model_out =  tf.squeeze(train_out)
 
     loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=outputs_truth,logits=model_out))
 
     optimizer_main = tf.train.AdamOptimizer(0.001)
     optim_main = optimizer_main.minimize(loss)
 
-    optimizer_pix = tf.train.AdamOptimizer(0.001)
-    optim_pix = optimizer_pix.minimize(pix_loss)
-
+    run_meta = tf.RunMetadata()
     with tf.Session() as sess:
+        profiler = tf.profiler.Profiler(sess.graph)
         sess.run(tf.global_variables_initializer())
-        for x in range(100):
-            tot_loss = 0
-            num_iters = 10
-            #for y in range(num_iters):
-            #    opt_val,loss_val = sess.run([optim_pix,pix_loss])
-            #    tot_loss += loss_val
-            #print(tot_loss / num_iters)
-
         print("main loss started")
+        opts = (tf.profiler.ProfileOptionBuilder(
+            tf.profiler.ProfileOptionBuilder.time_and_memory())
+            .build())
+
         for x in range(NUM_TRAIN_ITERS):
             tot_loss = 0
-            num_iters = 80
+            num_iters = 10
             for y in range(num_iters):
-                opt_val,loss_val = sess.run([optim_main,loss])
+                opt_val,loss_val = sess.run([optim_main,loss],
+                       options=tf.RunOptions(
+                           trace_level=tf.RunOptions.FULL_TRACE),
+                       run_metadata=run_meta)
+                profiler.add_step(y*num_iters+x, run_meta)
+                profiler.profile_operations(options=opts)
                 tot_loss += loss_val
             print(tot_loss / num_iters)
+        #profiler.advise(options=opts)
+
 
 
 
