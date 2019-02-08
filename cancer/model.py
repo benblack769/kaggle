@@ -2,12 +2,12 @@ import tensorflow as tf
 import numpy as np
 import os
 from resxnet import ResXNet
+from resxnet_1d import ResXNet1d
 
-BATCH_SIZE = 2
-NUM_TRAIN_ITERS = 3
+BATCH_SIZE = 8
+NUM_TRAIN_ITERS = 100000
 IMG_SIZE = 96
 IMG_CHANNELS = 3
-SUPERPIX_CHANNELS = 32
 
 def read_csv(filename):
     with open(filename) as file:
@@ -57,20 +57,18 @@ class Model:
         lay1size = 32
         self.DEPTH=DEPTH=5
         NUM_FOLDS = 4
+        self.NUM_LAYERS_PER_DEPTH = NUM_LAYERS_PER_DEPTH = 3
 
         for x in range(DEPTH):
-            self.layers["convlay{}0".format(x)] = ResXNet(
-                filters=lay1size,
-                kernel_size=CONV1_SIZE,
-                input_channels=lay1size,
-                num_folds=NUM_FOLDS,
-                padding="same",
-                activation=tf.nn.relu)
-            '''self.layers["convlay{}1".format(x)] = tf.layers.Conv2D(
-                filters=lay1size,
-                kernel_size=CONV1_SIZE,
-                padding="same",
-                activation=tf.nn.relu)'''
+            for y in range(NUM_LAYERS_PER_DEPTH):
+                self.layers["convlay{}{}".format(x,y)] = ResXNet(
+                    filters=lay1size,
+                    input_channels=lay1size,
+                    kernel_size=CONV1_SIZE,
+                    num_branches=8,
+                    inner_size=8,
+                    padding="same",
+                    activation=tf.nn.relu)
             self.layers["maxpool{}".format(x)] = tf.layers.MaxPooling2D(
                 pool_size=POOL_SIZE,
                 strides=POOL_STRIDES,
@@ -93,8 +91,11 @@ class Model:
         cur_input = input
         #cur_input = self.layers["input_filter"](cur_input)
         for x in range(self.DEPTH):
-            cur_input = self.layers["convlay{}0".format(x)](cur_input)
-            #cur_input = self.layers["convlay{}1".format(x)](cur_input)
+            for y in range(self.NUM_LAYERS_PER_DEPTH):
+                old_cur_input = cur_input
+                cur_input = self.layers["convlay{}{}".format(x,y)](cur_input)
+                if not(x == 0 and y == 0):
+                    cur_input = cur_input + old_cur_input
             cur_input = self.layers["maxpool{}".format(x)](cur_input)
             print(cur_input)
 
@@ -104,7 +105,7 @@ class Model:
         cur_input = self.layers["fcout"](cur_input)
         print(cur_input)
 
-        return cur_input
+        return cur_input * 0.1
 
 def get_train_test_csv_data(csv_data,split):
     csv_len = len(csv_data.values()[0])
@@ -113,38 +114,38 @@ def train_main():
     csv_data = read_csv("../data/train_labels.csv")
     bmp_folder = "../data/bmps_train/"
     #train_csv_data,test_csv_data = get_train_test_csv_data(csv_data)
-    input_gen,outputs_truth = make_dataset(csv_data,bmp_folder)
-    #input_gen_test,outputs_truth_test = make_dataset(csv_data,bmp_folder)
-
-    mod = Model()
-    train_out = mod.fn(input_gen)
-    #test_out =
-    model_out =  tf.squeeze(train_out)
-
-    loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=outputs_truth,logits=model_out))
-
-    optimizer_main = tf.train.AdamOptimizer(0.001)
-    optim_main = optimizer_main.minimize(loss)
-
-    run_meta = tf.RunMetadata()
     with tf.Session() as sess:
-        profiler = tf.profiler.Profiler(sess.graph)
+        input_gen,outputs_truth = make_dataset(csv_data,bmp_folder)
+        #input_gen_test,outputs_truth_test = make_dataset(csv_data,bmp_folder)
+
+        mod = Model()
+        train_out = mod.fn(input_gen)
+        #test_out =
+        model_out =  tf.reshape(train_out,(BATCH_SIZE,))
+
+        loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=outputs_truth,logits=model_out))
+
+        optimizer_main = tf.train.AdamOptimizer(0.001)
+        optim_main = optimizer_main.minimize(loss)
+
+        #run_meta = tf.RunMetadata()
+        #profiler = tf.profiler.Profiler(sess.graph)
         sess.run(tf.global_variables_initializer())
         print("main loss started")
-        opts = (tf.profiler.ProfileOptionBuilder(
-            tf.profiler.ProfileOptionBuilder.time_and_memory())
-            .build())
+        #opts = (tf.profiler.ProfileOptionBuilder(
+        #    tf.profiler.ProfileOptionBuilder.time_and_memory())
+        #    .build())
 
         for x in range(NUM_TRAIN_ITERS):
             tot_loss = 0
-            num_iters = 10
+            num_iters = 50
             for y in range(num_iters):
-                opt_val,loss_val = sess.run([optim_main,loss],
-                       options=tf.RunOptions(
-                           trace_level=tf.RunOptions.FULL_TRACE),
-                       run_metadata=run_meta)
-                profiler.add_step(y*num_iters+x, run_meta)
-                profiler.profile_operations(options=opts)
+                opt_val,loss_val = sess.run([optim_main,loss])#,
+                #       options=tf.RunOptions(
+                #           trace_level=tf.RunOptions.FULL_TRACE),
+                #       run_metadata=run_meta)
+                #profiler.add_step(y*num_iters+x, run_meta)
+                #profiler.profile_operations(options=opts)
                 tot_loss += loss_val
             print(tot_loss / num_iters)
         #profiler.advise(options=opts)
