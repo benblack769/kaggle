@@ -1,5 +1,5 @@
 from keras.models import Sequential, Model
-from keras.layers import Conv2D, GlobalAveragePooling2D, Activation, Lambda, Dense, Flatten, MaxPooling2D, BatchNormalization, AveragePooling2D
+from keras.layers import Conv2D, GlobalAveragePooling2D, Activation, Lambda, Dense, Flatten, MaxPooling2D, BatchNormalization, AveragePooling2D, Add, Input
 from keras.preprocessing.image import ImageDataGenerator
 import pandas
 from keras import backend as K
@@ -10,8 +10,10 @@ import numpy as np
 import mxnet as mx
 import os
 import shutil
+import keras
 #mxnet specific
 from keras.backend import KerasSymbol,keras_mxnet_symbol
+from rotate_info import multiproc_generator
 
 trainx = np.load("../data/in_data.npy")
 trainy = np.load("../data/out_data.npy")
@@ -100,8 +102,85 @@ def check_shape(x):
     return x
 
 
+def build_model_resnet():
+    MAIN_SIZE = 64
+    DEPTH=5
+    data_format = 'channels_first'
+    NUM_LAYERS_PER_DEPTH = 3
+    #NUM_PATHS = 16
+    #PATH_SIZE = 8
+    def skip_conv_mxnet(x):
+        conved = mx.sym.Convolution(
+            data=x.symbol,
+            weight=K.ones((MAIN_SIZE,MAIN_SIZE,1,1)).symbol / MAIN_SIZE,
+            bias=K.zeros((MAIN_SIZE,)).symbol,
+            kernel=[1,1],
+            num_filter=MAIN_SIZE,
+            layout='NCHW',
+        )
+        return KerasSymbol(conved,is_var=True)
+
+    def skip_conv(x):
+        res = K.conv2d(
+            x=x,
+            kernel=K.ones((BATCH_SIZE,MAIN_SIZE,1,1)) / MAIN_SIZE,
+            strides=(2,2),
+            data_format=data_format,
+        )
+        return res
+
+    first_input = Input(shape=(IMG_SIZE, IMG_SIZE, IMG_CHANNELS))
+    transposed_input = Lambda(transpose_input)(first_input)
+    widened_input = Conv2D(MAIN_SIZE, [3,3], data_format=data_format, use_bias=True)(transposed_input)
+    cur_input = widened_input
+    for x in range(DEPTH):
+        #cur_input = BatchNormalization(axis=1)(prev_input)
+        for y in range(NUM_LAYERS_PER_DEPTH):
+            prev_input = cur_input
+            check_shape(cur_input)
+            check_shape(prev_input)
+            #model.add(BatchNormalization(axis=1))
+            #model.add(Conv2D(NUM_PATHS*PATH_SIZE, [1,1], data_format=data_format, use_bias=False))
+            cur_input = BatchNormalization(axis=1)(cur_input)
+            cur_input = Activation('relu')(cur_input)
+            cur_input = Conv2D(MAIN_SIZE, [3,3], padding='same',data_format=data_format, use_bias=True, kernel_initializer='random_normal')(cur_input)
+            cur_input = BatchNormalization(axis=1)(cur_input)
+            cur_input = Activation('relu')(cur_input)
+            cur_input = Conv2D(MAIN_SIZE, [3,3], padding='same',data_format=data_format, use_bias=True, kernel_initializer='random_normal')(cur_input)
+            #model.add(GroupedConvLayer(
+            #    conv_size=[3,3],
+            #    num_paths=NUM_PATHS,
+            #    path_size=PATH_SIZE))
+            #check_shape(cur_input)
+            #check_shape(prev_input)
+            cur_input = Add()([cur_input, prev_input])
+            #model.add(Conv2D(MAIN_SIZE, [1,1], data_format=data_format, use_bias=False))
+            #model.add(Conv2D(MAIN_SIZE, [3,3], data_format=data_format, use_bias=True, kernel_initializer='random_normal'))
+
+        if x < DEPTH-1:
+            cur_input = Lambda(skip_conv_mxnet)(cur_input)
+
+        #model.add(MaxPooling2D(pool_size=(2,2),padding='same',data_format=data_format))
+        #model.add(Dense(MAIN_SIZE))
+
+    #model.add(Flatten())
+    #model.add(Dense(MAIN_SIZE,activation='relu'))
+    #model.add(Dense(1))
+    #model.add(Lambda(lambda x: x * 0.2))
+    #cur_input = Conv2D(MAIN_SIZE, [1,1], data_format=data_format, use_bias=True)(cur_input)
+    cur_input = GlobalAveragePooling2D(data_format=data_format)(cur_input)
+    cur_input = Dense(MAIN_SIZE)(cur_input)
+    cur_input = Activation('relu')(cur_input)
+    cur_input = Dense(1)(cur_input)
+    cur_input = Activation('sigmoid')(cur_input)
+
+    model = Model(inputs=first_input,outputs=cur_input)
+
+    return model
+
+
 def build_model():
-    MAIN_SIZE = 32
+    MAIN_SIZE = 64
     DEPTH=5
     data_format = 'channels_first'
     NUM_LAYERS_PER_DEPTH = 1
@@ -144,7 +223,7 @@ def build_model():
     return model
 
 
-model = build_model()
+model = build_model_resnet()
 '''Sequential([
     Lambda(transpose_input,input_shape=(IMG_SIZE, IMG_SIZE, IMG_CHANNELS)),
     Conv2D(32,[3,3],padding='same'),#, input_shape=(IMG_SIZE, IMG_SIZE, IMG_CHANNELS)),
@@ -179,6 +258,16 @@ def shuffle_together(tx,ty):
 def round_div(x,div):
     return x - x % div
 
+class DataGenerator(keras.utils.Sequence):
+    def __init__(self):
+        self.mygen = multiproc_generator()
+
+    def __len__(self):
+        return 1024*128
+
+    def __getitem__(self,idx):
+        return next(self.mygen)
+
 trainx, trainy = shuffle_together(trainx, trainy)
 
 validation_amount = 1024*32
@@ -205,7 +294,7 @@ for x in range(10):
         shuffle=True,
         validation_data=(testx, testy)
     )
-    model.save_weights("../data/weights/step{}.h5".format(x))
+    model.save_weights("../data/weights_resnet/step{}.h5".format(x))
     #exit(0)
 #model.fit_generator(
 #    image_gen,

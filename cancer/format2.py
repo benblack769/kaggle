@@ -2,6 +2,7 @@ import pandas
 import numpy as np
 from PIL import Image
 
+CHUNK_SIZE = 512
 
 def read_img(fname):
     im = Image.open(fname)
