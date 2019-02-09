@@ -10,13 +10,14 @@ import numpy as np
 import mxnet as mx
 import os
 import shutil
+import sys
 import keras
 #mxnet specific
 from keras.backend import KerasSymbol,keras_mxnet_symbol
-from rotate_info import multiproc_generator
+from rotate_info import multiproc_generator, full_file_generator
 
-trainx = np.load("../data/in_data.npy")
-trainy = np.load("../data/out_data.npy")
+#trainx = np.load("../data/in_data.npy")
+#trainy = np.load("../data/out_data.npy")
 #datagen = ImageDataGenerator(
         #rotation_range=40,
 #        rescale=1./255)
@@ -223,7 +224,7 @@ def build_model():
     return model
 
 
-model = build_model_resnet()
+model = build_model()
 '''Sequential([
     Lambda(transpose_input,input_shape=(IMG_SIZE, IMG_SIZE, IMG_CHANNELS)),
     Conv2D(32,[3,3],padding='same'),#, input_shape=(IMG_SIZE, IMG_SIZE, IMG_CHANNELS)),
@@ -261,40 +262,76 @@ def round_div(x,div):
 class DataGenerator(keras.utils.Sequence):
     def __init__(self):
         self.mygen = multiproc_generator()
+        self.cur_out = next(self.mygen)
+        self.out_idx = 0
 
     def __len__(self):
         return 1024*128
 
     def __getitem__(self,idx):
-        return next(self.mygen)
+        if len(self.cur_out) <= self.out_idx + BATCH_SIZE:
+            self.cur_out = next(self.mygen)
+            self.out_idx = 0
 
-trainx, trainy = shuffle_together(trainx, trainy)
+        out = self.cur_out[self.out_idx: self.out_idx+BATCH_SIZE]
+        self.out_idx += BATCH_SIZE
+        return out
 
-validation_amount = 1024*32
-cutoffbatch_size = round_div(len(trainx)-validation_amount, BATCH_SIZE)
+def chunked_generator():
+    gen =  multiproc_generator()
+    for vx,vy in gen:
+        for x in range(0,len(vx),BATCH_SIZE):
+            yield vx[x:x+BATCH_SIZE],vy[x:x+BATCH_SIZE]
+
+
+
+#trainx, trainy = shuffle_together(trainx, trainy)
+
+#validation_amount = 1024*32
+#cutoffbatch_size = round_div(len(trainx)-validation_amount, BATCH_SIZE)
 #cutoffbatch_size = 4096
-testx =  trainx[-validation_amount:]
-testy =  trainy[-validation_amount:]
-trainx = trainx[:cutoffbatch_size]
-trainy = trainy[:cutoffbatch_size]
+#testx =  trainx[-validation_amount:]
+#testy =  trainy[-validation_amount:]
+#trainx = trainx[:cutoffbatch_size]
+#trainy = trainy[:cutoffbatch_size]
 
-weights = "../data/weights/"
-if os.path.exists(weights):
-    shutil.rmtree(weights)
-os.mkdir(weights)
+#weights = "../data/weights_resnet/"
+#if os.path.exists(weights):
+#    shutil.rmtree(weights)
+#os.mkdir(weights)
 
-for x in range(10):
-    trainx, trainy = shuffle_together(trainx, trainy)
+valid_in = np.load("../data/validation_in.npy").astype(np.float32) / 255.0
+valid_out = np.load("../data/validation_out.npy").astype(np.float32)
 
-    model.fit(
-        x=trainx,
-        y=trainy,
+data_generator = multiproc_generator()
+for x in range(100):
+    #trainx, trainy = shuffle_together(trainx, trainy)
+    for x in range(50):
+        genx,geny = next(data_generator)
+        genx = genx.astype(np.float32) / 255.0
+        geny = geny.astype(np.float32)
+        model.fit(
+            x=genx,
+            y=geny,
+            batch_size=BATCH_SIZE,
+        )
+
+    print(model.metrics_names)
+    print(model.evaluate(
+        x=valid_in,
+        y=valid_out,
         batch_size=BATCH_SIZE,
-        epochs=2,
-        shuffle=True,
-        validation_data=(testx, testy)
-    )
-    model.save_weights("../data/weights_resnet/step{}.h5".format(x))
+    ))
+    # validate
+
+    #for i,x in enumerate(chunked_generator()):
+    #    print(i)
+    #model.fit_generator(
+    #    generator=chunked_generator(),
+    #    steps_per_epoch=1024*64,
+    #    epochs=4,
+    #)
+    #model.save_weights("../data/weights_resnet/step{}.h5".format(x))
     #exit(0)
 #model.fit_generator(
 #    image_gen,

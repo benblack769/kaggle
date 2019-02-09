@@ -71,7 +71,7 @@ def multiproc_gen_helper(queue):
 
 def multiproc_generator():
     queue = Queue(50)
-    procs = [Process(target=multiproc_gen_helper,args=(queue,)) for p in range(cpu_count()-1)]
+    procs = [Process(target=multiproc_gen_helper,args=(queue,)) for p in range(4)]
     for p in procs:
         p.start()
     while True:
