@@ -213,10 +213,6 @@ def build_model():
         model.add(MaxPooling2D(pool_size=(2,2),padding='same',data_format=data_format))
         #model.add(Dense(MAIN_SIZE))
 
-    #model.add(Flatten())
-    #model.add(Dense(MAIN_SIZE,activation='relu'))
-    #model.add(Dense(1))
-    #model.add(Lambda(lambda x: x * 0.2))
     model.add(Conv2D(1, [1,1], data_format=data_format, use_bias=True))
     model.add(GlobalAveragePooling2D(data_format=data_format))
     model.add(Activation('sigmoid'))
@@ -225,22 +221,6 @@ def build_model():
 
 
 model = build_model()
-'''Sequential([
-    Lambda(transpose_input,input_shape=(IMG_SIZE, IMG_SIZE, IMG_CHANNELS)),
-    Conv2D(32,[3,3],padding='same'),#, input_shape=(IMG_SIZE, IMG_SIZE, IMG_CHANNELS)),
-    Activation('relu'),
-    Dense(32),
-    GroupedConvLayer(conv_size=[3,3], num_paths=4, path_size=8),
-    Dense(32),
-    Conv2D(32,[3,3],padding='same'),
-    #Activation('relu'),
-    #Lambda(custom_op),
-    #Activation('relu'),
-    Conv2D(1,[3,3],padding='same'),
-    GlobalAveragePooling2D(),
-    Lambda(lambda x: x * 0.02),
-    Activation('sigmoid'),
-])'''
 print("model finished!")
 model.compile(optimizer='adam',
               loss='binary_crossentropy',
@@ -284,28 +264,11 @@ def chunked_generator():
             yield vx[x:x+BATCH_SIZE],vy[x:x+BATCH_SIZE]
 
 
-
-#trainx, trainy = shuffle_together(trainx, trainy)
-
-#validation_amount = 1024*32
-#cutoffbatch_size = round_div(len(trainx)-validation_amount, BATCH_SIZE)
-#cutoffbatch_size = 4096
-#testx =  trainx[-validation_amount:]
-#testy =  trainy[-validation_amount:]
-#trainx = trainx[:cutoffbatch_size]
-#trainy = trainy[:cutoffbatch_size]
-
-#weights = "../data/weights_resnet/"
-#if os.path.exists(weights):
-#    shutil.rmtree(weights)
-#os.mkdir(weights)
-
 valid_in = np.load("../data/validation_in.npy").astype(np.float32) / 255.0
 valid_out = np.load("../data/validation_out.npy").astype(np.float32)
 
 data_generator = multiproc_generator()
 for x in range(100):
-    #trainx, trainy = shuffle_together(trainx, trainy)
     for x in range(50):
         genx,geny = next(data_generator)
         genx = genx.astype(np.float32) / 255.0
@@ -322,19 +285,3 @@ for x in range(100):
         y=valid_out,
         batch_size=BATCH_SIZE,
     ))
-    # validate
-
-    #for i,x in enumerate(chunked_generator()):
-    #    print(i)
-    #model.fit_generator(
-    #    generator=chunked_generator(),
-    #    steps_per_epoch=1024*64,
-    #    epochs=4,
-    #)
-    #model.save_weights("../data/weights_resnet/step{}.h5".format(x))
-    #exit(0)
-#model.fit_generator(
-#    image_gen,
-#    steps_per_epoch=16,
-#    epochs=50
-#)

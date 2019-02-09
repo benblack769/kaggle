@@ -70,8 +70,9 @@ def multiproc_gen_helper(queue):
         queue.put((batchx,batchy))
 
 def multiproc_generator():
-    queue = Queue(50)
-    procs = [Process(target=multiproc_gen_helper,args=(queue,)) for p in range(4)]
+    num_procs = 4
+    queue = Queue(num_procs*3)
+    procs = [Process(target=multiproc_gen_helper,args=(queue,)) for p in range(num_procs)]
     for p in procs:
         p.start()
     while True:
